@@ -78,6 +78,85 @@ npm run dev
 - Страницы `/register`, `/login`, `/` (home с профилем и кнопкой logout)
 - JWT хранится в `localStorage`, hydrate при загрузке через `/auth/me`
 
+## Деплой на VPS (без домена, доступ по IP)
+
+### 0. Что нужно на сервере
+
+- Linux VPS (Ubuntu 22/24, Debian 12 и т.п.).
+- Docker и Docker Compose plugin:
+
+  ```bash
+  curl -fsSL https://get.docker.com | sh
+  sudo usermod -aG docker $USER   # перелогиниться
+  ```
+
+- В файрволе/security group открыть TCP-порты `3000` (frontend) и `4000` (backend). Postgres наружу не пробрасывается.
+
+### 1. Клонировать репозиторий
+
+```bash
+git clone https://github.com/SHX-Developer/Telegram.git messenger
+cd messenger
+```
+
+### 2. Заполнить `.env.prod`
+
+```bash
+cp .env.prod.example .env.prod
+# Сгенерировать секреты:
+openssl rand -base64 48     # → JWT_SECRET
+openssl rand -base64 24     # → POSTGRES_PASSWORD
+nano .env.prod              # вписать IP сервера в PUBLIC_WEB_URL / PUBLIC_API_URL
+```
+
+`PUBLIC_API_URL` обязательно `http://<IP_сервера>:4000` — этот URL «вшивается» в frontend на этапе сборки.
+
+### 3. Собрать и запустить
+
+```bash
+docker compose --env-file .env.prod -f docker-compose.prod.yml up -d --build
+```
+
+Backend на старте сам прогонит `prisma migrate deploy` (см. `backend/docker-entrypoint.sh`).
+
+Проверить:
+
+```bash
+docker compose -f docker-compose.prod.yml ps
+docker compose -f docker-compose.prod.yml logs -f backend
+curl http://localhost:4000/health           # {"ok":true}
+```
+
+Открыть в браузере: `http://<IP_сервера>:3000`.
+
+### 4. Обновить (новый коммит)
+
+```bash
+cd messenger
+git pull
+docker compose --env-file .env.prod -f docker-compose.prod.yml up -d --build
+```
+
+### 5. Полезное
+
+```bash
+# Логи всех сервисов
+docker compose -f docker-compose.prod.yml logs -f
+
+# Зайти в БД
+docker compose -f docker-compose.prod.yml exec postgres psql -U messenger -d messenger
+
+# Остановить
+docker compose -f docker-compose.prod.yml down
+
+# Снести вместе с данными БД (ОСТОРОЖНО)
+docker compose -f docker-compose.prod.yml down -v
+```
+
+### Когда привяжешь домен
+
+Сменить `PUBLIC_WEB_URL=https://example.com`, `PUBLIC_API_URL=https://api.example.com`, поднять Nginx + Let's Encrypt перед контейнерами и переcобрать frontend. Это уже следующая итерация.
+
 ## Дальше (план)
 
 - **Этап 2**: профиль, поиск пользователей, создание личного чата.
