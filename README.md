@@ -28,47 +28,45 @@ Telegram-like мессенджер. Сейчас реализован **Этап
         └── store/auth.ts       # Zustand auth store
 ```
 
-## Запуск (первый раз)
+## Локальный запуск
 
-### 1. Поднять Postgres
+Требования: Node 20+, Docker Desktop.
 
-```bash
-docker compose up -d
-```
-
-Проверить, что контейнер запущен и healthy:
+### Первый запуск — всё одной командой
 
 ```bash
-docker compose ps
+npm install         # ставит concurrently в корне
+npm run setup       # ставит deps, поднимает postgres, прогоняет миграции
+npm run dev         # backend + frontend параллельно
 ```
 
-### 2. Backend
+`npm run setup` сам:
 
-```bash
-cd backend
-cp .env.example .env
-npm install
-npx prisma migrate dev --name init
-npm run dev
-```
+1. установит зависимости в `backend/` и `frontend/`,
+2. создаст `backend/.env` и `frontend/.env.local` из примеров (если их нет),
+3. поднимет postgres контейнер,
+4. дождётся готовности БД и прогонит `prisma migrate`.
 
-Сервер слушает `http://localhost:4000`.
+После этого `npm run dev` запускает оба процесса с общими логами, помеченными `be` и `fe`.
+Backend — `http://localhost:4000`, Frontend — `http://localhost:3000`.
 
-Полезные команды:
+### Полезные npm-скрипты (из корня)
 
-- `npm run prisma:studio` — UI для просмотра БД.
-- `npm run prisma:migrate` — применить новые миграции.
-
-### 3. Frontend
-
-```bash
-cd frontend
-cp .env.local.example .env.local
-npm install
-npm run dev
-```
-
-Открыть `http://localhost:3000`.
+| Команда                | Что делает                                              |
+| ---------------------- | ------------------------------------------------------- |
+| `npm run dev`          | backend + frontend параллельно                          |
+| `npm run dev:backend`  | только backend                                          |
+| `npm run dev:frontend` | только frontend                                         |
+| `npm run db:up`        | поднять postgres                                        |
+| `npm run db:down`      | остановить postgres                                     |
+| `npm run db:reset`     | снести postgres вместе с volume и поднять заново        |
+| `npm run db:psql`      | открыть `psql` внутри контейнера                        |
+| `npm run db:logs`      | логи postgres                                           |
+| `npm run migrate`      | `prisma migrate dev` в `backend/`                       |
+| `npm run generate`     | `prisma generate`                                       |
+| `npm run studio`       | Prisma Studio (UI для БД)                               |
+| `npm run typecheck`    | tsc для backend и frontend                              |
+| `npm run build`        | production-билд backend и frontend                      |
 
 ## Что работает
 
