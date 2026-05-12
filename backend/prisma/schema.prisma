@@ -27,6 +27,11 @@ enum ChatType {
   private
 }
 
+enum MessageKind {
+  text
+  voice
+}
+
 model Chat {
   id        String   @id @default(cuid())
   type      ChatType @default(private)
@@ -38,10 +43,11 @@ model Chat {
 }
 
 model ChatMember {
-  id        String   @id @default(cuid())
-  chatId    String
-  userId    String
-  createdAt DateTime @default(now())
+  id         String    @id @default(cuid())
+  chatId     String
+  userId     String
+  lastReadAt DateTime?
+  createdAt  DateTime  @default(now())
 
   chat Chat @relation(fields: [chatId], references: [id], onDelete: Cascade)
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
@@ -51,13 +57,24 @@ model ChatMember {
 }
 
 model Message {
-  id        String    @id @default(cuid())
-  chatId    String
-  senderId  String
-  text      String
-  createdAt DateTime  @default(now())
-  isEdited  Boolean   @default(false)
-  deletedAt DateTime?
+  id                String      @id @default(cuid())
+  chatId            String
+  senderId          String
+  kind              MessageKind @default(text)
+  text              String
+  // Для voice: data URL (base64) аудио. Для будущих kind может расширяться.
+  attachmentUrl     String?
+  attachmentDurationSec Int?
+  createdAt         DateTime    @default(now())
+  isEdited          Boolean     @default(false)
+  deletedAt         DateTime?
+  // Per-user деление: если userId в массиве — сообщение скрыто для него
+  // (вариант "удалить у себя"). deletedAt — глобальное удаление.
+  deletedForUserIds String[]    @default([])
+
+  replyToId String?
+  replyTo   Message?  @relation("MessageReply", fields: [replyToId], references: [id], onDelete: SetNull)
+  replies   Message[] @relation("MessageReply")
 
   chat   Chat @relation(fields: [chatId], references: [id], onDelete: Cascade)
   sender User @relation(fields: [senderId], references: [id], onDelete: Cascade)

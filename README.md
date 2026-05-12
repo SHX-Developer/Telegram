@@ -1,6 +1,6 @@
 # Messenger
 
-Telegram-like мессенджер. Сейчас реализован **Этап 1**: каркас проекта, PostgreSQL через Docker, Prisma, и базовая авторизация (регистрация / логин / `me`).
+Telegram-like мессенджер. Реализованы **Этапы 1–4**: каркас, авторизация, профиль, поиск, личные чаты, отправка/получение сообщений real-time через Socket.IO, online/offline, typing indicator, read receipts (галочки) и непрочитанные счётчики.
 
 ## Стек
 
@@ -12,20 +12,45 @@ Telegram-like мессенджер. Сейчас реализован **Этап
 
 ```
 .
-├── docker-compose.yml          # Postgres
-├── backend/                    # Express API
-│   ├── prisma/schema.prisma    # User, Chat, ChatMember, Message
+├── docker-compose.yml             # Postgres (dev)
+├── docker-compose.prod.yml        # postgres + backend + frontend (prod)
+├── package.json                   # root npm-скрипты: dev, db:*, migrate, setup
+├── scripts/setup.mjs              # автоматический первый запуск
+├── backend/                       # Express API
+│   ├── Dockerfile
+│   ├── prisma/schema.prisma       # User, Chat, ChatMember, Message
 │   └── src/
-│       ├── index.ts            # Express bootstrap
-│       ├── routes/auth.ts      # /auth/register, /auth/login, /auth/me
-│       ├── middleware/auth.ts  # JWT guard
-│       └── lib/                # prisma, env, jwt
-└── frontend/                   # Next.js
+│       ├── index.ts               # bootstrap (cors, json, error handler)
+│       ├── routes/
+│       │   ├── auth.ts            # /auth/register, /auth/login, /auth/me
+│       │   ├── users.ts           # /users/search, /users/:id, PATCH /users/me
+│       │   ├── chats.ts           # GET /chats, POST /chats/private
+│       │   └── messages.ts        # GET/POST /chats/:id/messages
+│       ├── middleware/auth.ts     # JWT guard
+│       └── lib/                   # prisma, env, jwt, serializers
+└── frontend/                      # Next.js (App Router)
+    ├── Dockerfile
     └── src/
-        ├── app/                # /, /login, /register
-        ├── components/         # AuthGuard
-        ├── lib/                # axios, types
-        └── store/auth.ts       # Zustand auth store
+        ├── app/
+        │   ├── page.tsx           # редирект на /chats или /login
+        │   ├── login/, register/  # формы авторизации
+        │   └── (app)/             # защищённый layout с сайдбаром
+        │       ├── layout.tsx     # AuthGuard + 2-колоночный shell
+        │       ├── chats/page.tsx
+        │       ├── chats/[chatId]/page.tsx
+        │       └── profile/page.tsx
+        ├── components/
+        │   ├── Sidebar.tsx        # ChatsPanel / ProfilePanel + BottomTabs
+        │   ├── ChatsPanel.tsx     # поиск + список чатов
+        │   ├── ChatListItem.tsx
+        │   ├── ChatView.tsx       # header + список сообщений + ввод
+        │   ├── MessageList.tsx
+        │   ├── MessageInput.tsx
+        │   ├── ProfilePanel.tsx
+        │   ├── Avatar.tsx, SearchBar.tsx, BottomTabs.tsx, EmptyState.tsx
+        │   └── AuthGuard.tsx
+        ├── lib/                   # api, types, users, chats
+        └── store/                 # zustand: auth, chats
 ```
 
 ## Локальный запуск
@@ -70,11 +95,50 @@ Backend — `http://localhost:4000`, Frontend — `http://localhost:3000`.
 
 ## Что работает
 
-- `POST /auth/register` — `{ username, password, displayName }` → `{ token, user }`
-- `POST /auth/login` — `{ username, password }` → `{ token, user }`
-- `GET  /auth/me` — `Authorization: Bearer <token>` → `{ user }`
-- Страницы `/register`, `/login`, `/` (home с профилем и кнопкой logout)
-- JWT хранится в `localStorage`, hydrate при загрузке через `/auth/me`
+### REST API
+
+Все ручки кроме `/auth/register` и `/auth/login` требуют `Authorization: Bearer <token>`.
+
+| Метод | Путь                              | Что делает                                              |
+| ----- | --------------------------------- | ------------------------------------------------------- |
+| POST  | `/auth/register`                  | `{ username, password, displayName }` → `{ token, user }` |
+| POST  | `/auth/login`                     | `{ username, password }` → `{ token, user }`            |
+| GET   | `/auth/me`                        | текущий пользователь                                    |
+| GET   | `/users/search?query=`            | поиск по username / displayName                         |
+| GET   | `/users/:id`                      | публичный профиль                                       |
+| PATCH | `/users/me`                       | `{ displayName?, avatarUrl? }`                          |
+| GET   | `/chats`                          | список чатов с собеседником и lastMessage               |
+| POST  | `/chats/private`                  | `{ userId }` — найти или создать приватный чат          |
+| GET   | `/chats/:chatId/messages`         | `?before=<iso>&limit=<n>` — пагинация назад             |
+| POST  | `/chats/:chatId/messages`         | `{ text }`                                              |
+
+### Socket.IO
+
+Подключение: `io(API_URL, { auth: { token } })`.
+
+| Направление       | Событие                | Payload                                                    |
+| ----------------- | ---------------------- | ---------------------------------------------------------- |
+| Клиент → Сервер   | `join_chat`            | `{ chatId }`                                               |
+| Клиент → Сервер   | `leave_chat`           | `{ chatId }`                                               |
+| Клиент → Сервер   | `send_message`         | `{ chatId, text }` + ack `{ ok, message? }`                |
+| Клиент → Сервер   | `typing_start`         | `{ chatId }`                                               |
+| Клиент → Сервер   | `typing_stop`          | `{ chatId }`                                               |
+| Клиент → Сервер   | `mark_read`            | `{ chatId }`                                               |
+| Сервер → Клиент   | `new_message`          | `{ message }` (рассылается всем участникам чата)           |
+| Сервер → Клиент   | `messages_read`        | `{ chatId, userId, lastReadAt }`                           |
+| Сервер → Клиент   | `user_typing`          | `{ chatId, userId }`                                       |
+| Сервер → Клиент   | `user_stopped_typing`  | `{ chatId, userId }`                                       |
+| Сервер → Клиент   | `user_online`          | `{ userId }` (только контактам этого юзера)                |
+| Сервер → Клиент   | `user_offline`         | `{ userId, lastSeenAt }`                                   |
+
+### UI
+
+Двухколоночный layout (как Telegram Desktop):
+
+- **Слева** — поиск, список чатов с зелёной точкой (online), красным badge (unread — `9+` если больше 9), одной/двумя галочками на последнем своём сообщении. Внизу — табы **Chats / Profile**.
+- **Справа** — переписка: шапка с собеседником, статус («в сети» / «печатает…» / «был N мин назад»), лента сообщений с группировкой по дате, галочки прочтения, поле ввода (Enter — отправить, Shift+Enter — перенос строки).
+- Поиск открывает (или создаёт) приватный чат.
+- Все обновления — real-time через Socket.IO, без перезагрузки.
 
 ## Деплой на VPS (без домена, доступ по IP)
 
@@ -155,9 +219,17 @@ docker compose -f docker-compose.prod.yml down -v
 
 Сменить `PUBLIC_WEB_URL=https://example.com`, `PUBLIC_API_URL=https://api.example.com`, поднять Nginx + Let's Encrypt перед контейнерами и переcобрать frontend. Это уже следующая итерация.
 
+## Применение миграций после `git pull`
+
+В этой итерации появилось новое поле `ChatMember.lastReadAt`. Чтобы прокатить миграцию локально:
+
+```bash
+npm run migrate          # выполнит prisma migrate dev — увидит файл миграции и применит
+```
+
+В проде (на VPS) при `docker compose up -d --build` контейнер backend сам прогонит
+`prisma migrate deploy` через `docker-entrypoint.sh`.
+
 ## Дальше (план)
 
-- **Этап 2**: профиль, поиск пользователей, создание личного чата.
-- **Этап 3**: список чатов, экран чата, отправка сообщений через REST.
-- **Этап 4**: Socket.IO — real-time сообщения, online/offline, typing.
-- **Этап 5**: edit / delete, read/unread, responsive UI.
+- **Этап 5**: edit / delete сообщений, аватарки (загрузка через S3/R2), responsive mobile UI.

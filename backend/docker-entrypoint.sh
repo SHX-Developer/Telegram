@@ -1,8 +1,5 @@
 #!/bin/sh
+# Миграции теперь применяются самим Node-процессом при старте (см. bootstrap()
+# в src/index.ts), так что здесь только запускаем команду.
 set -e
-
-echo "Running prisma migrate deploy..."
-npx prisma migrate deploy
-
-echo "Starting server..."
 exec "$@"

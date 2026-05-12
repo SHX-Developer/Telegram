@@ -27,7 +27,7 @@ function LoginForm() {
     setError(null);
     try {
       await login(username.trim(), password);
-      router.replace("/");
+      router.replace("/chats");
     } catch (err) {
       if (axios.isAxiosError(err)) {
         setError(err.response?.data?.error ?? "Login failed");

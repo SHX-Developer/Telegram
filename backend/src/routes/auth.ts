@@ -4,6 +4,7 @@ import { z } from "zod";
 import { prisma } from "../lib/prisma";
 import { signToken } from "../lib/jwt";
 import { requireAuth, AuthRequest } from "../middleware/auth";
+import { publicUser } from "../lib/serializers";
 
 const router = Router();
 
@@ -21,24 +22,6 @@ const loginSchema = z.object({
   username: z.string().min(1),
   password: z.string().min(1),
 });
-
-function publicUser(user: {
-  id: string;
-  username: string;
-  displayName: string;
-  avatarUrl: string | null;
-  lastSeenAt: Date | null;
-  createdAt: Date;
-}) {
-  return {
-    id: user.id,
-    username: user.username,
-    displayName: user.displayName,
-    avatarUrl: user.avatarUrl,
-    lastSeenAt: user.lastSeenAt,
-    createdAt: user.createdAt,
-  };
-}
 
 router.post("/register", async (req, res) => {
   const parsed = registerSchema.safeParse(req.body);

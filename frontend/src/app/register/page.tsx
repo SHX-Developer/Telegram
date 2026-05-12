@@ -28,7 +28,7 @@ function RegisterForm() {
     setError(null);
     try {
       await register(username.trim(), password, displayName.trim());
-      router.replace("/");
+      router.replace("/chats");
     } catch (err) {
       if (axios.isAxiosError(err)) {
         setError(err.response?.data?.error ?? "Registration failed");

@@ -12,6 +12,7 @@ interface AuthState {
   hydrate: () => Promise<void>;
   login: (username: string, password: string) => Promise<void>;
   register: (username: string, password: string, displayName: string) => Promise<void>;
+  setUser: (user: User) => void;
   logout: () => void;
 }
 
@@ -61,6 +62,8 @@ export const useAuthStore = create<AuthState>((set) => ({
       set({ loading: false });
     }
   },
+
+  setUser: (user) => set({ user }),
 
   logout: () => {
     setStoredToken(null);

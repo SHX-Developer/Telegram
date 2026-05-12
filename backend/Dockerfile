@@ -5,7 +5,10 @@ FROM node:22-alpine AS deps
 WORKDIR /app
 # Prisma needs openssl on alpine
 RUN apk add --no-cache openssl
+# Копируем prisma до npm install, потому что postinstall в package.json
+# вызывает `prisma generate` и ему нужна схема.
 COPY package.json package-lock.json* ./
+COPY prisma ./prisma
 RUN --mount=type=cache,target=/root/.npm \
     npm install --no-audit --no-fund
 
@@ -17,7 +20,6 @@ COPY --from=deps /app/node_modules ./node_modules
 COPY package.json tsconfig.json ./
 COPY prisma ./prisma
 COPY src ./src
-RUN npx prisma generate
 RUN npm run build
 
 # ---------- runner ----------
@@ -26,16 +28,14 @@ WORKDIR /app
 ENV NODE_ENV=production
 RUN apk add --no-cache openssl tini
 
-# Copy only what we need at runtime
+# Production install (с postinstall → prisma generate, поэтому prisma/ нужна сейчас)
 COPY package.json package-lock.json* ./
+COPY prisma ./prisma
 RUN --mount=type=cache,target=/root/.npm \
     npm install --no-audit --no-fund --omit=dev
 
-# Copy compiled output, generated prisma client and schema
+# Copy compiled output
 COPY --from=builder /app/dist ./dist
-COPY --from=builder /app/node_modules/.prisma ./node_modules/.prisma
-COPY --from=builder /app/node_modules/@prisma ./node_modules/@prisma
-COPY --from=builder /app/prisma ./prisma
 
 COPY docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
 RUN chmod +x /usr/local/bin/docker-entrypoint.sh
