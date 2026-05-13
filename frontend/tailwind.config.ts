@@ -6,19 +6,37 @@ const config: Config = {
   theme: {
     extend: {
       colors: {
-        // Telegram-inspired dark palette
+        // Dark-purple / liquid glass палитра
         bg: {
-          DEFAULT: "#0f1620",
-          panel: "#17212b",
-          elevated: "#1f2c39",
-          hover: "#2b3a4a",
+          DEFAULT: "#0B0714",
+          panel: "#151022",
+          elevated: "rgba(255, 255, 255, 0.06)",
+          hover: "rgba(255, 255, 255, 0.10)",
+          glass: "rgba(255, 255, 255, 0.06)",
         },
         accent: {
-          DEFAULT: "#3390ec",
-          hover: "#2880d6",
+          DEFAULT: "#7C3AED",
+          hover: "#8B4DF0",
+          soft: "rgba(124, 58, 237, 0.18)",
+          ring: "rgba(124, 58, 237, 0.45)",
         },
-        muted: "#6b7d8f",
-        border: "#2a3a4a",
+        gold: {
+          DEFAULT: "#D4AF37",
+          hover: "#E6C158",
+        },
+        muted: "#A1A1AA",
+        border: "rgba(255, 255, 255, 0.10)",
+        // Семантические
+        success: "#22C55E",
+        error: "#EF4444",
+        warning: "#F59E0B",
+      },
+      backdropBlur: {
+        glass: "16px",
+      },
+      boxShadow: {
+        glass: "0 8px 32px 0 rgba(0, 0, 0, 0.45)",
+        accent: "0 0 0 3px rgba(124, 58, 237, 0.25)",
       },
       fontFamily: {
         sans: ['"Inter"', "system-ui", "-apple-system", "Segoe UI", "Roboto", "sans-serif"],

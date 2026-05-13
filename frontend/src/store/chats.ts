@@ -38,8 +38,32 @@ interface ChatsState {
     chatId: string,
     payload: { attachmentDataUrl: string; durationSec: number; replyToId?: string | null }
   ) => Promise<void>;
+  sendFileMessage: (
+    chatId: string,
+    payload: {
+      attachmentDataUrl: string;
+      attachmentName: string;
+      attachmentMime: string;
+      attachmentSize: number;
+      replyToId?: string | null;
+    }
+  ) => Promise<void>;
+  setReaction: (chatId: string, messageId: string, emoji: string | null) => Promise<void>;
+  markMessageView: (chatId: string, messageId: string) => Promise<void>;
+  togglePinChat: (chatId: string, pinned: boolean) => Promise<void>;
+  togglePinMessage: (
+    chatId: string,
+    messageId: string,
+    pinned: boolean
+  ) => Promise<void>;
+  forwardMessage: (
+    fromChatId: string,
+    messageId: string,
+    chatIds: string[]
+  ) => Promise<void>;
   clearChat: (chatId: string) => Promise<void>;
   deleteChat: (chatId: string) => Promise<void>;
+  refetchChat: (chatId: string) => Promise<void>;
   upsertChatFromPrivate: (chat: Chat) => void;
   reset: () => void;
 
@@ -47,8 +71,12 @@ interface ChatsState {
   onIncomingMessage: (message: Message, selfId: string) => void;
   onMessageUpdated: (message: Message) => void;
   onMessageDeleted: (chatId: string, messageId: string, forEveryone: boolean) => void;
+  onReactionChanged: (chatId: string, messageId: string, userId: string, emoji: string | null, selfId: string) => void;
+  onMessageViewed: (chatId: string, messageId: string, viewsCount: number) => void;
+  onChatPinnedMessageChanged: (chatId: string, messageId: string | null) => void;
   onChatCleared: (chatId: string) => void;
   onChatDeleted: (chatId: string) => void;
+  onChatUpdated: (chatId: string) => void;
   onMessagesRead: (chatId: string, userId: string, lastReadAt: string) => void;
   onUserOnline: (userId: string) => void;
   onUserOffline: (userId: string, lastSeenAt: string | null) => void;
@@ -204,6 +232,88 @@ export const useChatsStore = create<ChatsState>((set, get) => ({
     }
   },
 
+  sendFileMessage: async (chatId, payload) => {
+    set({ sending: true });
+    try {
+      const message = await chatsApi.sendFileMessage(chatId, payload);
+      set((s) => {
+        const existing = s.messagesByChat[chatId] ?? [];
+        const already = existing.some((m) => m.id === message.id);
+        return {
+          messagesByChat: {
+            ...s.messagesByChat,
+            [chatId]: already ? existing : [...existing, message],
+          },
+          chats: bumpChatToTop(s.chats, chatId, message),
+        };
+      });
+    } finally {
+      set({ sending: false });
+    }
+  },
+
+  setReaction: async (chatId, messageId, emoji) => {
+    await chatsApi.setReaction(chatId, messageId, emoji);
+    // Реальный апдейт прилетит через message_reaction_changed.
+  },
+
+  markMessageView: async (chatId, messageId) => {
+    try {
+      await chatsApi.markMessageView(chatId, messageId);
+    } catch {
+      // ignore
+    }
+  },
+
+  refetchChat: async (chatId) => {
+    // Перезапросим весь список (просто — один эндпоинт, мало overhead).
+    try {
+      const chats = await chatsApi.listChats();
+      set({ chats });
+    } catch {
+      // ignore
+    }
+  },
+
+  togglePinChat: async (chatId, pinned) => {
+    if (pinned) await chatsApi.pinChat(chatId);
+    else await chatsApi.unpinChat(chatId);
+    set((s) => ({
+      chats: s.chats
+        .map((c) => (c.id === chatId ? { ...c, isPinned: pinned } : c))
+        .sort((a, b) => {
+          if (a.isPinned !== b.isPinned) return a.isPinned ? -1 : 1;
+          const ta = a.lastMessage?.createdAt ?? a.updatedAt;
+          const tb = b.lastMessage?.createdAt ?? b.updatedAt;
+          return tb.localeCompare(ta);
+        }),
+    }));
+  },
+
+  togglePinMessage: async (chatId, messageId, pinned) => {
+    if (pinned) await chatsApi.pinMessage(chatId, messageId);
+    else await chatsApi.unpinMessage(chatId, messageId);
+    // pinnedMessage прилетит через socket event chat_pinned_message_changed,
+    // плюс мы можем обновить локально оптимистично:
+    set((s) => ({
+      chats: s.chats.map((c) => {
+        if (c.id !== chatId) return c;
+        if (pinned) {
+          const m = (s.messagesByChat[chatId] ?? []).find((mm) => mm.id === messageId);
+          return { ...c, pinnedMessage: m ?? c.pinnedMessage };
+        }
+        return c.pinnedMessage?.id === messageId
+          ? { ...c, pinnedMessage: null }
+          : c;
+      }),
+    }));
+  },
+
+  forwardMessage: async (fromChatId, messageId, chatIds) => {
+    await chatsApi.forwardMessage(fromChatId, messageId, chatIds);
+    // Новые сообщения прилетят как new_message в каждом из chatIds
+  },
+
   clearChat: async (chatId) => {
     await chatsApi.clearChat(chatId);
     set((s) => ({
@@ -357,6 +467,85 @@ export const useChatsStore = create<ChatsState>((set, get) => ({
         activeChatId: s.activeChatId === chatId ? null : s.activeChatId,
       };
     });
+  },
+
+  onChatUpdated: (chatId) => {
+    // Минимально — рефетчим список чатов
+    void get().refetchChat(chatId);
+  },
+
+  onReactionChanged: (chatId, messageId, userId, emoji, selfId) => {
+    set((s) => {
+      const list = s.messagesByChat[chatId];
+      if (!list) return s;
+      return {
+        messagesByChat: {
+          ...s.messagesByChat,
+          [chatId]: list.map((m) => {
+            if (m.id !== messageId) return m;
+            // Удалим существующую реакцию этого юзера
+            const stripped = m.reactions
+              .map((r) => ({ ...r, userIds: r.userIds.filter((id) => id !== userId) }))
+              .map((r) =>
+                r.userIds.length === 0
+                  ? null
+                  : { ...r, count: r.userIds.length, byMe: r.userIds.includes(selfId) }
+              )
+              .filter((r): r is NonNullable<typeof r> => r !== null);
+
+            if (!emoji) return { ...m, reactions: stripped };
+
+            const idx = stripped.findIndex((r) => r.emoji === emoji);
+            if (idx >= 0) {
+              const r = stripped[idx];
+              const userIds = [...r.userIds, userId];
+              stripped[idx] = {
+                ...r,
+                userIds,
+                count: userIds.length,
+                byMe: userIds.includes(selfId),
+              };
+            } else {
+              stripped.push({
+                emoji,
+                userIds: [userId],
+                count: 1,
+                byMe: userId === selfId,
+              });
+            }
+            return { ...m, reactions: stripped };
+          }),
+        },
+      };
+    });
+  },
+
+  onMessageViewed: (chatId, messageId, viewsCount) => {
+    set((s) => {
+      const list = s.messagesByChat[chatId];
+      if (!list) return s;
+      return {
+        messagesByChat: {
+          ...s.messagesByChat,
+          [chatId]: list.map((m) => (m.id === messageId ? { ...m, viewsCount } : m)),
+        },
+      };
+    });
+  },
+
+  onChatPinnedMessageChanged: (chatId, messageId) => {
+    set((s) => ({
+      chats: s.chats.map((c) => {
+        if (c.id !== chatId) return c;
+        if (!messageId) return { ...c, pinnedMessage: null };
+        // Если есть локально — берём его, иначе оставляем что было (рефетч можно отдельно).
+        const m = (s.messagesByChat[chatId] ?? []).find((mm) => mm.id === messageId);
+        return m ? { ...c, pinnedMessage: m } : c;
+      }),
+    }));
+    // На всякий случай — рефетч списка, чтобы pinnedMessage был полным.
+    if (!messageId) return;
+    void get().refetchChat(chatId);
   },
 
   onMessagesRead: (chatId, userId, lastReadAt) => {

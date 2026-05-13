@@ -1,18 +1,22 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Avatar } from "./Avatar";
 import { MessageList } from "./MessageList";
 import { MessageInput } from "./MessageInput";
 import { MessageActionsMenu, type MessageAction } from "./MessageActionsMenu";
+import { ReactionPicker } from "./ReactionPicker";
 import { DeleteMessageDialog } from "./DeleteMessageDialog";
 import { ChatHeaderMenu } from "./ChatHeaderMenu";
 import { ConfirmDialog } from "./ConfirmDialog";
+import { ChatInfoPanel } from "./ChatInfoPanel";
+import { ForwardDialog } from "./ForwardDialog";
 import { useChatsStore } from "@/store/chats";
 import { useAuthStore } from "@/store/auth";
 import { getSocket } from "@/lib/socket";
+import { canPostInChat, canManageChat, chatDisplayName } from "@/lib/permissions";
 import type { Message } from "@/lib/types";
 
 interface Props {
@@ -48,6 +52,7 @@ export function ChatView({ chatId }: Props) {
     messagesLoading,
     sendMessage,
     sendVoiceMessage,
+    sendFileMessage,
     deleteMessage,
     fetchChats,
     chatsLoaded,
@@ -55,25 +60,40 @@ export function ChatView({ chatId }: Props) {
     resetTyping,
     clearChat,
     deleteChat,
+    setReaction,
+    markMessageView,
+    togglePinMessage,
   } = useChatsStore();
 
   const chat = useMemo(() => chats.find((c) => c.id === chatId), [chats, chatId]);
   const messages = messagesByChat[chatId] ?? [];
+  const isChannel = chat?.type === "channel";
+  const isPrivate = chat?.type === "private";
+  const canPost = canPostInChat(chat);
 
   const [selected, setSelected] = useState<SelectedMessage | null>(null);
+  const [reactionPickerFor, setReactionPickerFor] = useState<SelectedMessage | null>(null);
   const [editing, setEditing] = useState<Message | null>(null);
   const [replyTo, setReplyTo] = useState<Message | null>(null);
   const [deleting, setDeleting] = useState<Message | null>(null);
+  const [forwarding, setForwarding] = useState<Message | null>(null);
   const [showClearConfirm, setShowClearConfirm] = useState(false);
   const [showDeleteChatConfirm, setShowDeleteChatConfirm] = useState(false);
+  const [highlightId, setHighlightId] = useState<string | null>(null);
+  const [infoOpen, setInfoOpen] = useState(false);
+  const highlightTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
     setSelected(null);
+    setReactionPickerFor(null);
     setEditing(null);
     setReplyTo(null);
     setDeleting(null);
+    setForwarding(null);
     setShowClearConfirm(false);
     setShowDeleteChatConfirm(false);
+    setHighlightId(null);
+    setInfoOpen(false);
   }, [chatId]);
 
   useEffect(() => {
@@ -100,11 +120,10 @@ export function ChatView({ chatId }: Props) {
     }
   }, [messages, chatId, me?.id]);
 
-  // Esc priority: модалки → меню → edit/reply → /chats
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
       if (e.key !== "Escape" || e.isComposing) return;
-      if (deleting || showClearConfirm || showDeleteChatConfirm || selected) return;
+      if (deleting || showClearConfirm || showDeleteChatConfirm || selected || reactionPickerFor) return;
       if (editing) {
         e.preventDefault();
         setEditing(null);
@@ -115,12 +134,27 @@ export function ChatView({ chatId }: Props) {
         setReplyTo(null);
         return;
       }
+      if (infoOpen) {
+        e.preventDefault();
+        setInfoOpen(false);
+        return;
+      }
       e.preventDefault();
       router.push("/chats");
     }
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [deleting, selected, editing, replyTo, showClearConfirm, showDeleteChatConfirm, router]);
+  }, [
+    deleting,
+    selected,
+    editing,
+    replyTo,
+    showClearConfirm,
+    showDeleteChatConfirm,
+    reactionPickerFor,
+    infoOpen,
+    router,
+  ]);
 
   const onContextMenu = useCallback(
     (id: string, x: number, y: number) => {
@@ -131,15 +165,49 @@ export function ChatView({ chatId }: Props) {
     [messages]
   );
 
+  const onJumpToMessage = useCallback((id: string) => {
+    if (highlightTimerRef.current) clearTimeout(highlightTimerRef.current);
+    setHighlightId(null);
+    requestAnimationFrame(() => setHighlightId(id));
+    highlightTimerRef.current = setTimeout(() => setHighlightId(null), 2100);
+  }, []);
+
+  useEffect(
+    () => () => {
+      if (highlightTimerRef.current) clearTimeout(highlightTimerRef.current);
+    },
+    []
+  );
+
   const onAction = useCallback(
-    (action: MessageAction, m: Message) => {
+    (action: MessageAction, m: Message, coords: { x: number; y: number }) => {
       switch (action) {
+        case "forward":
+          setForwarding(m);
+          break;
+        case "pin":
+          void togglePinMessage(m.chatId, m.id, true);
+          break;
+        case "unpin":
+          void togglePinMessage(m.chatId, m.id, false);
+          break;
+        case "react":
+          // Если у меня уже есть реакция — снять, иначе показать пикер.
+          {
+            const my = m.reactions.find((r) => r.byMe);
+            if (my) {
+              void setReaction(m.chatId, m.id, null);
+            } else {
+              setReactionPickerFor({ message: m, x: coords.x, y: coords.y });
+            }
+          }
+          break;
         case "reply":
           setEditing(null);
           setReplyTo(m);
           break;
         case "copy":
-          if (m.kind === "voice") return;
+          if (m.kind !== "text") return;
           void navigator.clipboard?.writeText(m.text).catch(() => undefined);
           break;
         case "edit":
@@ -152,7 +220,29 @@ export function ChatView({ chatId }: Props) {
           break;
       }
     },
-    [me?.id]
+    [me?.id, setReaction, togglePinMessage]
+  );
+
+  const onToggleReaction = useCallback(
+    (messageId: string, emoji: string) => {
+      const m = messages.find((x) => x.id === messageId);
+      if (!m) return;
+      const my = m.reactions.find((r) => r.byMe);
+      if (my && my.emoji === emoji) {
+        void setReaction(chatId, messageId, null);
+      } else {
+        void setReaction(chatId, messageId, emoji);
+      }
+    },
+    [chatId, messages, setReaction]
+  );
+
+  const onMessageVisible = useCallback(
+    (messageId: string) => {
+      if (!isChannel) return;
+      void markMessageView(chatId, messageId);
+    },
+    [chatId, isChannel, markMessageView]
   );
 
   const onSend = useCallback(
@@ -174,6 +264,20 @@ export function ChatView({ chatId }: Props) {
       setReplyTo(null);
     },
     [chatId, replyTo?.id, sendVoiceMessage]
+  );
+
+  const onSendFile = useCallback(
+    async (payload: { dataUrl: string; name: string; mime: string; size: number }) => {
+      await sendFileMessage(chatId, {
+        attachmentDataUrl: payload.dataUrl,
+        attachmentName: payload.name,
+        attachmentMime: payload.mime,
+        attachmentSize: payload.size,
+        replyToId: replyTo?.id ?? null,
+      });
+      setReplyTo(null);
+    },
+    [chatId, replyTo?.id, sendFileMessage]
   );
 
   const onConfirmDelete = useCallback(
@@ -205,111 +309,225 @@ export function ChatView({ chatId }: Props) {
   }
 
   const other = chat?.otherUser;
-  const typing = chat && other ? !!typingByChat[chatId]?.has(other.id) : false;
+  const typing =
+    chat && other ? !!typingByChat[chatId]?.has(other.id) : false;
   const loading = !!messagesLoading[chatId];
 
   const replyAuthorName =
-    replyTo && (replyTo.senderId === me.id ? "Вы" : other?.displayName ?? "Собеседник");
+    replyTo && (replyTo.senderId === me.id ? "Вы" : other?.displayName ?? "");
 
-  const canEdit = !!selected && selected.message.senderId === me.id && selected.message.kind === "text";
+  const canEdit =
+    !!selected && selected.message.senderId === me.id && selected.message.kind === "text";
+  const canCopy = !!selected && selected.message.kind === "text";
+  // pin: в private — оба участника, в group/channel — только owner/admin
+  const canPin =
+    !!chat &&
+    (chat.type === "private" ? true : canManageChat(chat));
+  const isMessagePinned =
+    !!selected && chat?.pinnedMessage?.id === selected.message.id;
+
+  const title = chatDisplayName(chat);
+  const headerAvatarUrl = isPrivate ? other?.avatarUrl : chat?.avatarUrl;
+  const headerOnline = isPrivate ? chat?.otherUserIsOnline : false;
+  const headerHref = isPrivate ? (other ? `/users/${other.id}` : null) : null;
 
   return (
     <>
       <header className="h-16 shrink-0 border-b border-border bg-bg-panel flex items-center gap-3 px-3 pr-2">
-        {other ? (
-          <Link
-            href={`/users/${other.id}`}
-            className="flex items-center gap-3 min-w-0 flex-1 rounded-md hover:bg-bg-hover px-2 py-1 transition-colors"
-          >
-            <Avatar
-              name={other.displayName}
-              url={other.avatarUrl}
-              size="sm"
-              online={chat?.otherUserIsOnline}
-            />
-            <div className="min-w-0">
-              <div className="font-medium truncate">{other.displayName}</div>
-              <ChatStatus
-                typing={typing}
-                online={!!chat?.otherUserIsOnline}
-                lastSeenAt={other.lastSeenAt}
-              />
+          {chat && headerHref ? (
+            <Link
+              href={headerHref}
+              className="flex items-center gap-3 min-w-0 flex-1 rounded-md hover:bg-bg-hover px-2 py-1 transition-colors"
+            >
+              <Avatar name={title} url={headerAvatarUrl} size="sm" online={headerOnline} />
+              <div className="min-w-0">
+                <div className="font-medium truncate">{title}</div>
+                <ChatStatus
+                  typing={typing}
+                  online={!!headerOnline}
+                  lastSeenAt={other?.lastSeenAt ?? null}
+                />
+              </div>
+            </Link>
+          ) : chat ? (
+            <button
+              type="button"
+              onClick={() => setInfoOpen(true)}
+              className="flex items-center gap-3 min-w-0 flex-1 rounded-md hover:bg-bg-hover px-2 py-1 transition-colors text-left"
+            >
+              <Avatar name={title} url={headerAvatarUrl} size="sm" />
+              <div className="min-w-0">
+                <div className="font-medium truncate">{title}</div>
+                <div className="text-xs text-muted truncate">
+                  {chat.type === "channel" ? "Канал" : "Группа"} · {chat.members.length}{" "}
+                  {chat.members.length === 1 ? "участник" : "участников"}
+                </div>
+              </div>
+            </button>
+          ) : (
+            <div className="flex items-center gap-3 flex-1">
+              <Avatar name="?" size="sm" />
+              <div className="text-muted text-sm">…</div>
             </div>
-          </Link>
+          )}
+
+          <ChatHeaderMenu
+            onClearHistory={() => setShowClearConfirm(true)}
+            onDeleteChat={() => setShowDeleteChatConfirm(true)}
+          />
+        </header>
+
+      {chat?.pinnedMessage && (
+        <div
+          role="button"
+          tabIndex={0}
+          onClick={() => onJumpToMessage(chat.pinnedMessage!.id)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter" || e.key === " ") {
+              e.preventDefault();
+              onJumpToMessage(chat.pinnedMessage!.id);
+            }
+          }}
+          className="border-b border-border bg-white/[0.04] hover:bg-white/[0.08] transition-colors px-4 py-2 text-left flex items-center gap-3"
+        >
+          <svg viewBox="0 0 24 24" className="h-4 w-4 text-accent shrink-0" fill="currentColor" aria-hidden="true">
+            <path d="M12 2v8h6l-2 4H8l-2-4h6V2zm0 12v8" />
+          </svg>
+          <div className="min-w-0 flex-1">
+            <div className="text-[11px] uppercase tracking-wider text-accent">
+              Закреплённое сообщение
+            </div>
+            <div className="text-xs text-muted truncate">
+              {chat.pinnedMessage.kind === "voice"
+                ? `🎤 Голосовое (${chat.pinnedMessage.attachmentDurationSec ?? 0}c)`
+                : chat.pinnedMessage.kind === "file"
+                ? `📎 ${chat.pinnedMessage.attachmentName ?? "Файл"}`
+                : chat.pinnedMessage.text}
+            </div>
+          </div>
+          {canPin && (
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                if (chat.pinnedMessage)
+                  void togglePinMessage(chatId, chat.pinnedMessage.id, false);
+              }}
+              aria-label="Открепить"
+              className="h-7 w-7 grid place-items-center rounded-full text-muted hover:text-white hover:bg-bg-hover"
+            >
+              <svg viewBox="0 0 24 24" className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth="2">
+                <path d="M6 6l12 12M18 6 6 18" strokeLinecap="round" />
+              </svg>
+            </button>
+          )}
+        </div>
+      )}
+
+      <MessageList
+          messages={messages}
+          selfId={me.id}
+          loading={loading}
+          otherLastReadAt={chat?.otherUserLastReadAt ?? null}
+          selectedId={selected?.message.id ?? null}
+          highlightId={highlightId}
+          isChannel={!!isChannel}
+          onContextMenu={onContextMenu}
+          onJumpToMessage={onJumpToMessage}
+          onToggleReaction={onToggleReaction}
+          onMessageVisible={onMessageVisible}
+        />
+
+        {canPost ? (
+          <MessageInput
+            chatId={chatId}
+            disabled={!chat}
+            editing={editing}
+            replyTo={replyTo}
+            replyToAuthorName={replyAuthorName ?? undefined}
+            onCancelEditing={() => setEditing(null)}
+            onCancelReply={() => setReplyTo(null)}
+            onSend={onSend}
+            onSendVoice={onSendVoice}
+            onSendFile={onSendFile}
+          />
         ) : (
-          <div className="flex items-center gap-3 flex-1">
-            <Avatar name="?" size="sm" />
-            <div className="text-muted text-sm">…</div>
+          <div className="border-t border-border bg-bg-panel px-6 py-4 text-center text-sm text-muted">
+            Только владельцы и админы могут публиковать в канале.
           </div>
         )}
 
-        <ChatHeaderMenu
-          onClearHistory={() => setShowClearConfirm(true)}
-          onDeleteChat={() => setShowDeleteChatConfirm(true)}
-        />
-      </header>
+        {selected && (
+          <MessageActionsMenu
+            isMine={selected.message.senderId === me.id}
+            canEdit={canEdit}
+            canCopy={canCopy}
+            canPin={canPin}
+            isPinned={isMessagePinned}
+            x={selected.x}
+            y={selected.y}
+            onAction={(action) =>
+              onAction(action, selected.message, { x: selected.x, y: selected.y })
+            }
+            onClose={() => setSelected(null)}
+          />
+        )}
 
-      <MessageList
-        messages={messages}
-        selfId={me.id}
-        loading={loading}
-        otherLastReadAt={chat?.otherUserLastReadAt ?? null}
-        selectedId={selected?.message.id ?? null}
-        onContextMenu={onContextMenu}
-      />
+        {reactionPickerFor && (
+          <ReactionPicker
+            x={reactionPickerFor.x}
+            y={reactionPickerFor.y}
+            isMine={reactionPickerFor.message.senderId === me.id}
+            onPick={(emoji) => {
+              void setReaction(chatId, reactionPickerFor.message.id, emoji);
+              setReactionPickerFor(null);
+            }}
+            onClose={() => setReactionPickerFor(null)}
+          />
+        )}
 
-      <MessageInput
-        chatId={chatId}
-        disabled={!chat}
-        editing={editing}
-        replyTo={replyTo}
-        replyToAuthorName={replyAuthorName ?? undefined}
-        onCancelEditing={() => setEditing(null)}
-        onCancelReply={() => setReplyTo(null)}
-        onSend={onSend}
-        onSendVoice={onSendVoice}
-      />
+        {deleting && (
+          <DeleteMessageDialog
+            message={deleting}
+            isMine={deleting.senderId === me.id}
+            onCancel={() => setDeleting(null)}
+            onConfirm={onConfirmDelete}
+          />
+        )}
 
-      {selected && (
-        <MessageActionsMenu
-          isMine={selected.message.senderId === me.id}
-          canEdit={canEdit}
-          x={selected.x}
-          y={selected.y}
-          onAction={(action) => onAction(action, selected.message)}
-          onClose={() => setSelected(null)}
+        {showClearConfirm && (
+          <ConfirmDialog
+            title="Очистить историю?"
+            description="Все сообщения будут удалены."
+            confirmLabel="Очистить"
+            destructive
+            onCancel={() => setShowClearConfirm(false)}
+            onConfirm={onConfirmClear}
+          />
+        )}
+
+        {showDeleteChatConfirm && (
+          <ConfirmDialog
+            title="Удалить чат?"
+            description="Чат и история будут удалены у всех участников."
+            confirmLabel="Удалить"
+            destructive
+            onCancel={() => setShowDeleteChatConfirm(false)}
+            onConfirm={onConfirmDeleteChat}
+          />
+        )}
+
+      {forwarding && (
+        <ForwardDialog
+          message={forwarding}
+          fromChatId={chatId}
+          onCancel={() => setForwarding(null)}
+          onForwarded={() => setForwarding(null)}
         />
       )}
 
-      {deleting && (
-        <DeleteMessageDialog
-          message={deleting}
-          isMine={deleting.senderId === me.id}
-          onCancel={() => setDeleting(null)}
-          onConfirm={onConfirmDelete}
-        />
-      )}
-
-      {showClearConfirm && (
-        <ConfirmDialog
-          title="Очистить историю?"
-          description="Все сообщения в этом чате будут удалены у обоих участников."
-          confirmLabel="Очистить"
-          destructive
-          onCancel={() => setShowClearConfirm(false)}
-          onConfirm={onConfirmClear}
-        />
-      )}
-
-      {showDeleteChatConfirm && (
-        <ConfirmDialog
-          title="Удалить чат?"
-          description="Чат будет удалён у обоих участников вместе со всеми сообщениями."
-          confirmLabel="Удалить"
-          destructive
-          onCancel={() => setShowDeleteChatConfirm(false)}
-          onConfirm={onConfirmDeleteChat}
-        />
+      {chat && !isPrivate && infoOpen && (
+        <ChatInfoPanel chat={chat} onClose={() => setInfoOpen(false)} />
       )}
     </>
   );

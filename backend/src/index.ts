@@ -29,8 +29,8 @@ app.use(
     credentials: true,
   })
 );
-// До 5MB — голосовые сообщения и аватарки приходят как data URL в JSON.
-app.use(express.json({ limit: "5mb" }));
+// До 8MB — голосовые, файлы и аватарки приходят как data URL в JSON.
+app.use(express.json({ limit: "8mb" }));
 
 app.get("/health", (_req, res) => {
   res.json({ ok: true });
@@ -44,8 +44,13 @@ app.use("/chats", chatsRouter);
 // Centralized error handler
 app.use((err: unknown, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
   // eslint-disable-next-line no-console
-  console.error(err);
-  res.status(500).json({ error: "Internal server error" });
+  console.error("[error]", err);
+  const message = err instanceof Error ? err.message : String(err);
+  if (env.NODE_ENV !== "production") {
+    res.status(500).json({ error: "Internal server error", details: message });
+  } else {
+    res.status(500).json({ error: "Internal server error" });
+  }
 });
 
 async function runPendingMigrations(): Promise<void> {

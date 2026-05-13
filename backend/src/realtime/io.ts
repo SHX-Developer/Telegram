@@ -65,9 +65,14 @@ export async function broadcastNewMessage(message: PublicMessage): Promise<void>
 
 export interface CreateMessageOptions {
   replyToId?: string | null;
-  kind?: "text" | "voice";
+  kind?: "text" | "voice" | "file";
   attachmentUrl?: string | null;
   attachmentDurationSec?: number | null;
+  attachmentName?: string | null;
+  attachmentMime?: string | null;
+  attachmentSize?: number | null;
+  forwardedFromUserId?: string | null;
+  forwardedFromMessageId?: string | null;
 }
 
 export async function createMessage(
@@ -96,8 +101,18 @@ export async function createMessage(
       kind: options.kind ?? "text",
       attachmentUrl: options.attachmentUrl ?? null,
       attachmentDurationSec: options.attachmentDurationSec ?? null,
+      attachmentName: options.attachmentName ?? null,
+      attachmentMime: options.attachmentMime ?? null,
+      attachmentSize: options.attachmentSize ?? null,
+      forwardedFromUserId: options.forwardedFromUserId ?? null,
+      forwardedFromMessageId: options.forwardedFromMessageId ?? null,
     },
-    include: { replyTo: true },
+    include: {
+      replyTo: true,
+      forwardedFromUser: { select: { id: true, displayName: true, username: true } },
+      reactions: { select: { userId: true, emoji: true } },
+      _count: { select: { views: true } },
+    },
   });
   await prisma.chat.update({
     where: { id: chatId },
@@ -109,7 +124,11 @@ export async function createMessage(
     data: { lastReadAt: message.createdAt },
   });
 
-  const wire = publicMessage(message);
+  const wire = publicMessage({
+    ...message,
+    reactions: message.reactions ?? [],
+    viewsCount: message._count?.views ?? 0,
+  });
   await broadcastNewMessage(wire);
   return wire;
 }
@@ -177,6 +196,92 @@ export async function broadcastChatDeleted(payload: {
   if (payload.memberIds.length === 0) return;
   const rooms = payload.memberIds.map(userRoom);
   io.to(rooms).emit("chat_deleted", { chatId: payload.chatId });
+}
+
+export async function broadcastChatUpdated(chatId: string): Promise<void> {
+  if (!io) return;
+  const members = await prisma.chatMember.findMany({
+    where: { chatId },
+    select: { userId: true },
+  });
+  if (members.length === 0) return;
+  const rooms = members.map((m) => userRoom(m.userId));
+  io.to(rooms).emit("chat_updated", { chatId });
+}
+
+export async function broadcastChatMemberAdded(chatId: string, addedUserIds: string[]): Promise<void> {
+  if (!io) return;
+  // Сообщить и старым (видят новых участников), и добавленным (видят чат).
+  const allMembers = await prisma.chatMember.findMany({
+    where: { chatId },
+    select: { userId: true },
+  });
+  const rooms = allMembers.map((m) => userRoom(m.userId));
+  io.to(rooms).emit("chat_member_added", { chatId, userIds: addedUserIds });
+}
+
+export async function broadcastChatMemberRemoved(chatId: string, userId: string): Promise<void> {
+  if (!io) return;
+  const members = await prisma.chatMember.findMany({
+    where: { chatId },
+    select: { userId: true },
+  });
+  const rooms = [userRoom(userId), ...members.map((m) => userRoom(m.userId))];
+  io.to(rooms).emit("chat_member_removed", { chatId, userId });
+}
+
+export async function emitChatToUser(
+  userId: string,
+  event: "chat_updated",
+  payload: { chatId: string }
+): Promise<void> {
+  if (!io) return;
+  io.to(userRoom(userId)).emit(event, payload);
+}
+
+export async function broadcastReactionChanged(
+  chatId: string,
+  messageId: string,
+  userId: string,
+  emoji: string | null
+): Promise<void> {
+  if (!io) return;
+  const members = await prisma.chatMember.findMany({
+    where: { chatId },
+    select: { userId: true },
+  });
+  if (members.length === 0) return;
+  const rooms = members.map((m) => userRoom(m.userId));
+  io.to(rooms).emit("message_reaction_changed", { chatId, messageId, userId, emoji });
+}
+
+export async function broadcastMessageViewed(
+  chatId: string,
+  messageId: string,
+  viewsCount: number
+): Promise<void> {
+  if (!io) return;
+  const members = await prisma.chatMember.findMany({
+    where: { chatId },
+    select: { userId: true },
+  });
+  if (members.length === 0) return;
+  const rooms = members.map((m) => userRoom(m.userId));
+  io.to(rooms).emit("message_viewed", { chatId, messageId, viewsCount });
+}
+
+export async function broadcastChatPinnedMessage(
+  chatId: string,
+  messageId: string | null
+): Promise<void> {
+  if (!io) return;
+  const members = await prisma.chatMember.findMany({
+    where: { chatId },
+    select: { userId: true },
+  });
+  if (members.length === 0) return;
+  const rooms = members.map((m) => userRoom(m.userId));
+  io.to(rooms).emit("chat_pinned_message_changed", { chatId, messageId });
 }
 
 // ────────────────────────────────────────────────────────────────────────

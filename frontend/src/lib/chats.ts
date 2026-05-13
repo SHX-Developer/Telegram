@@ -51,12 +51,106 @@ export async function sendVoiceMessage(
   return data.message;
 }
 
+export async function sendFileMessage(
+  chatId: string,
+  payload: {
+    attachmentDataUrl: string;
+    attachmentName: string;
+    attachmentMime: string;
+    attachmentSize: number;
+    replyToId?: string | null;
+  }
+): Promise<Message> {
+  const { data } = await api.post<{ message: Message }>(`/chats/${chatId}/messages`, {
+    kind: "file",
+    attachmentDataUrl: payload.attachmentDataUrl,
+    attachmentName: payload.attachmentName,
+    attachmentMime: payload.attachmentMime,
+    attachmentSize: payload.attachmentSize,
+    replyToId: payload.replyToId ?? null,
+  });
+  return data.message;
+}
+
 export async function clearChat(chatId: string): Promise<void> {
   await api.delete(`/chats/${chatId}/messages`);
 }
 
 export async function deleteChat(chatId: string): Promise<void> {
   await api.delete(`/chats/${chatId}`);
+}
+
+export async function createGroupChat(payload: {
+  title: string;
+  avatarUrl?: string | null;
+  memberIds: string[];
+}): Promise<Chat> {
+  const { data } = await api.post<{ chat: Chat }>("/chats/group", payload);
+  return data.chat;
+}
+
+export async function createChannelChat(payload: {
+  title: string;
+  avatarUrl?: string | null;
+  memberIds: string[];
+}): Promise<Chat> {
+  const { data } = await api.post<{ chat: Chat }>("/chats/channel", payload);
+  return data.chat;
+}
+
+export async function updateChat(
+  chatId: string,
+  payload: { title?: string; avatarUrl?: string | null }
+): Promise<Chat> {
+  const { data } = await api.patch<{ chat: Chat }>(`/chats/${chatId}`, payload);
+  return data.chat;
+}
+
+export async function addChatMembers(chatId: string, userIds: string[]): Promise<void> {
+  await api.post(`/chats/${chatId}/members`, { userIds });
+}
+
+export async function removeChatMember(chatId: string, userId: string): Promise<void> {
+  await api.delete(`/chats/${chatId}/members/${userId}`);
+}
+
+export async function setReaction(
+  chatId: string,
+  messageId: string,
+  emoji: string | null
+): Promise<void> {
+  await api.put(`/chats/${chatId}/messages/${messageId}/reaction`, { emoji });
+}
+
+export async function markMessageView(chatId: string, messageId: string): Promise<void> {
+  await api.post(`/chats/${chatId}/messages/${messageId}/view`);
+}
+
+export async function pinChat(chatId: string): Promise<void> {
+  await api.post(`/chats/${chatId}/pin`);
+}
+
+export async function unpinChat(chatId: string): Promise<void> {
+  await api.delete(`/chats/${chatId}/pin`);
+}
+
+export async function pinMessage(chatId: string, messageId: string): Promise<void> {
+  await api.post(`/chats/${chatId}/messages/${messageId}/pin`);
+}
+
+export async function unpinMessage(chatId: string, messageId: string): Promise<void> {
+  await api.delete(`/chats/${chatId}/messages/${messageId}/pin`);
+}
+
+export async function forwardMessage(
+  fromChatId: string,
+  messageId: string,
+  chatIds: string[]
+): Promise<{ results: Array<{ chatId: string; ok: boolean; error?: string }> }> {
+  const { data } = await api.post<{
+    results: Array<{ chatId: string; ok: boolean; error?: string }>;
+  }>(`/chats/${fromChatId}/messages/${messageId}/forward`, { chatIds });
+  return data;
 }
 
 export async function editMessage(

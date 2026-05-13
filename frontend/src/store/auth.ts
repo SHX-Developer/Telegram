@@ -10,8 +10,13 @@ interface AuthState {
   loading: boolean;
   initialized: boolean;
   hydrate: () => Promise<void>;
-  login: (username: string, password: string) => Promise<void>;
-  register: (username: string, password: string, displayName: string) => Promise<void>;
+  login: (identifier: string, password: string) => Promise<void>;
+  register: (input: {
+    phoneNumber: string;
+    firstName: string;
+    lastName?: string;
+    password: string;
+  }) => Promise<void>;
   setUser: (user: User) => void;
   logout: () => void;
 }
@@ -37,10 +42,10 @@ export const useAuthStore = create<AuthState>((set) => ({
     }
   },
 
-  login: async (username, password) => {
+  login: async (identifier, password) => {
     set({ loading: true });
     try {
-      const { data } = await api.post<AuthResponse>("/auth/login", { username, password });
+      const { data } = await api.post<AuthResponse>("/auth/login", { identifier, password });
       setStoredToken(data.token);
       set({ user: data.user, token: data.token });
     } finally {
@@ -48,14 +53,10 @@ export const useAuthStore = create<AuthState>((set) => ({
     }
   },
 
-  register: async (username, password, displayName) => {
+  register: async (input) => {
     set({ loading: true });
     try {
-      const { data } = await api.post<AuthResponse>("/auth/register", {
-        username,
-        password,
-        displayName,
-      });
+      const { data } = await api.post<AuthResponse>("/auth/register", input);
       setStoredToken(data.token);
       set({ user: data.user, token: data.token });
     } finally {

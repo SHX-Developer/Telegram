@@ -48,7 +48,7 @@ export function ConfirmDialog({
       <div
         role="dialog"
         aria-modal="true"
-        className="dialog-pop w-full max-w-sm mx-4 rounded-2xl bg-bg-panel border border-border shadow-2xl"
+        className="dialog-pop w-full max-w-sm mx-4 rounded-2xl glass-strong shadow-glass"
       >
         <div className="p-5">
           <h2 className="text-lg font-semibold">{title}</h2>

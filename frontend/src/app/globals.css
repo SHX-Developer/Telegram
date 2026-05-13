@@ -4,6 +4,9 @@
 
 :root {
   color-scheme: dark;
+  --accent: #7c3aed;
+  --accent-rgb: 124, 58, 237;
+  --gold: #d4af37;
 }
 
 html,
@@ -12,23 +15,43 @@ body {
 }
 
 body {
-  @apply bg-bg text-white antialiased;
+  @apply text-white antialiased;
+  background-color: #0b0714;
+  /* Лёгкое свечение в углах для liquid-glass ощущения */
+  background-image:
+    radial-gradient(60vmin 60vmin at 0% 0%, rgba(124, 58, 237, 0.18), transparent 60%),
+    radial-gradient(50vmin 50vmin at 100% 100%, rgba(212, 175, 55, 0.10), transparent 60%),
+    radial-gradient(40vmin 40vmin at 100% 0%, rgba(124, 58, 237, 0.10), transparent 60%);
+  background-attachment: fixed;
 }
 
-/* Subtle scrollbar in dark theme */
+/* ── Glass utility ───────────────────────────────────────────── */
+@layer components {
+  .glass {
+    @apply bg-white/[0.06] border border-white/10 backdrop-blur-md;
+  }
+  .glass-strong {
+    @apply bg-white/[0.10] border border-white/15 backdrop-blur-xl;
+  }
+}
+
+/* Скроллбары */
 ::-webkit-scrollbar {
   width: 8px;
   height: 8px;
 }
 ::-webkit-scrollbar-thumb {
-  background: #2a3a4a;
+  background: rgba(255, 255, 255, 0.12);
   border-radius: 4px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(124, 58, 237, 0.45);
 }
 ::-webkit-scrollbar-track {
   background: transparent;
 }
 
-/* Message bubble animations */
+/* ── Анимации появления сообщений ─────────────────────────────── */
 @keyframes msg-in-right {
   0% {
     opacity: 0;
@@ -56,7 +79,7 @@ body {
   animation: msg-in-left 240ms cubic-bezier(0.22, 1, 0.36, 1) both;
 }
 
-/* Pulse for unread badge on new message arrival */
+/* Badge unread */
 @keyframes badge-pop {
   0% {
     transform: scale(0.6);
@@ -85,19 +108,11 @@ body {
 
 /* Flash подсветка отредактированного сообщения */
 @keyframes msg-flash {
-  0%   { box-shadow: 0 0 0 0 rgba(51, 144, 236, 0.0); }
-  35%  { box-shadow: 0 0 0 4px rgba(51, 144, 236, 0.45); }
-  100% { box-shadow: 0 0 0 0 rgba(51, 144, 236, 0.0); }
+  0%   { box-shadow: 0 0 0 0 rgba(var(--accent-rgb), 0); }
+  35%  { box-shadow: 0 0 0 4px rgba(var(--accent-rgb), 0.55); }
+  100% { box-shadow: 0 0 0 0 rgba(var(--accent-rgb), 0); }
 }
 .msg-flash { animation: msg-flash 800ms ease-out both; }
-
-/* «Уничтожение» при удалении */
-@keyframes msg-deleted-flash {
-  0%   { transform: scale(1); opacity: 1; box-shadow: 0 0 0 0 rgba(239, 68, 68, 0); }
-  50%  { transform: scale(0.97); opacity: 0.85; box-shadow: 0 0 0 4px rgba(239, 68, 68, 0.35); }
-  100% { transform: scale(1); opacity: 1; box-shadow: 0 0 0 0 rgba(239, 68, 68, 0); }
-}
-.msg-deleted-flash { animation: msg-deleted-flash 700ms ease-out both; }
 
 /* Контекстное меню сообщения */
 @keyframes msg-menu-pop {
@@ -106,7 +121,7 @@ body {
 }
 .msg-menu-pop {
   animation: msg-menu-pop 140ms cubic-bezier(0.22, 1, 0.36, 1) both;
-  transform-origin: top right;
+  transform-origin: top left;
 }
 
 /* Modal */
@@ -127,3 +142,20 @@ body {
   50%      { opacity: 0.5; transform: scale(1.25); }
 }
 .record-pulse { animation: record-pulse 1s ease-in-out infinite; }
+
+/* Подсветка сообщения при переходе по reply */
+@keyframes msg-highlight {
+  0%   { box-shadow: 0 0 0 0 rgba(var(--accent-rgb), 0); }
+  20%  { box-shadow: 0 0 0 6px rgba(var(--accent-rgb), 0.55); }
+  100% { box-shadow: 0 0 0 0 rgba(var(--accent-rgb), 0); }
+}
+.msg-highlight { animation: msg-highlight 2000ms ease-out both; }
+
+/* Slide-in для info-panel чата */
+@keyframes info-panel-slide {
+  from { transform: translateX(100%); opacity: 0.6; }
+  to   { transform: translateX(0); opacity: 1; }
+}
+.info-panel-slide {
+  animation: info-panel-slide 220ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}

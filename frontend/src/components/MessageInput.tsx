@@ -3,6 +3,8 @@
 import { FormEvent, useEffect, useRef, useState } from "react";
 import { getSocket } from "@/lib/socket";
 import { useVoiceRecorder } from "@/lib/voiceRecorder";
+import { readFileForUpload } from "@/lib/file";
+import { EmojiPicker } from "./EmojiPicker";
 import type { Message } from "@/lib/types";
 
 interface Props {
@@ -18,6 +20,12 @@ interface Props {
     opts: { replyToId?: string | null; editId?: string | null }
   ) => Promise<void>;
   onSendVoice: (dataUrl: string, durationSec: number) => Promise<void>;
+  onSendFile: (payload: {
+    dataUrl: string;
+    name: string;
+    mime: string;
+    size: number;
+  }) => Promise<void>;
 }
 
 const TYPING_STOP_MS = 3000;
@@ -38,10 +46,14 @@ export function MessageInput({
   onCancelReply,
   onSend,
   onSendVoice,
+  onSendFile,
 }: Props) {
   const [text, setText] = useState("");
   const [sending, setSending] = useState(false);
+  const [emojiOpen, setEmojiOpen] = useState(false);
+  const [fileError, setFileError] = useState<string | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const isTypingRef = useRef(false);
   const stopTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -50,6 +62,8 @@ export function MessageInput({
   const isRecording = recorder.state === "recording";
   const isEncoding = recorder.state === "encoding";
 
+  // При входе в режим редактирования — подставляем текст. Фокус ставим
+  // только когда это явный edit (не при обычном входе в чат).
   useEffect(() => {
     if (editing) {
       setText(editing.text);
@@ -66,13 +80,10 @@ export function MessageInput({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [editing?.id]);
 
+  // Фокус при выборе reply — естественно, пользователь хочет писать ответ.
   useEffect(() => {
     if (replyTo) textareaRef.current?.focus();
   }, [replyTo?.id]);
-
-  useEffect(() => {
-    textareaRef.current?.focus();
-  }, [chatId]);
 
   function emitTypingStart() {
     if (isTypingRef.current || editing) return;
@@ -142,23 +153,73 @@ export function MessageInput({
     }
   }
 
-  async function onMicClick() {
-    if (disabled || sending || editing) return;
-    if (isRecording) {
-      // Стоп → отправить
-      const rec = await recorder.stopAndGet();
-      if (rec) {
-        setSending(true);
-        try {
-          await onSendVoice(rec.dataUrl, rec.durationSec);
-        } finally {
-          setSending(false);
-          requestAnimationFrame(() => textareaRef.current?.focus());
-        }
-      }
-    } else {
-      await recorder.start();
+  function insertEmoji(emoji: string) {
+    const ta = textareaRef.current;
+    if (!ta) {
+      setText((t) => t + emoji);
+      return;
     }
+    const start = ta.selectionStart ?? text.length;
+    const end = ta.selectionEnd ?? text.length;
+    const next = text.slice(0, start) + emoji + text.slice(end);
+    setText(next);
+    // Сохраняем фокус и ставим каретку после вставленного emoji
+    requestAnimationFrame(() => {
+      ta.focus();
+      const pos = start + emoji.length;
+      ta.setSelectionRange(pos, pos);
+    });
+    if (next.trim()) {
+      emitTypingStart();
+      bumpTypingTimer();
+    }
+  }
+
+  async function onPickFile(e: React.ChangeEvent<HTMLInputElement>) {
+    const f = e.target.files?.[0];
+    e.target.value = "";
+    if (!f) return;
+    setFileError(null);
+    try {
+      const payload = await readFileForUpload(f);
+      setSending(true);
+      try {
+        await onSendFile(payload);
+      } finally {
+        setSending(false);
+      }
+    } catch (err) {
+      setFileError(err instanceof Error ? err.message : "Не удалось отправить файл");
+    }
+  }
+
+  // ── Голос (hold-to-talk) ────────────────────────────────────────
+  const recordCancelRef = useRef(false);
+
+  async function startHoldRecord() {
+    if (disabled || sending || editing) return;
+    recordCancelRef.current = false;
+    await recorder.start();
+  }
+
+  async function finishHoldRecord() {
+    if (recordCancelRef.current) {
+      recorder.cancel();
+      return;
+    }
+    const rec = await recorder.stopAndGet();
+    if (!rec) return;
+    setSending(true);
+    try {
+      await onSendVoice(rec.dataUrl, rec.durationSec);
+    } finally {
+      setSending(false);
+    }
+  }
+
+  function cancelHoldRecord() {
+    recordCancelRef.current = true;
+    recorder.cancel();
   }
 
   const hasText = text.trim().length > 0;
@@ -180,6 +241,8 @@ export function MessageInput({
                 ? editing.text
                 : replyTo?.kind === "voice"
                 ? `🎤 Голосовое (${replyTo.attachmentDurationSec ?? 0}c)`
+                : replyTo?.kind === "file"
+                ? `📎 ${replyTo.attachmentName ?? "Файл"}`
                 : replyTo?.text}
             </div>
           </div>
@@ -201,18 +264,18 @@ export function MessageInput({
         </div>
       )}
 
-      {recorder.error && (
+      {(recorder.error || fileError) && (
         <div className="px-4 py-1.5 text-xs text-red-400 bg-red-500/10 border-b border-red-500/30">
-          {recorder.error}
+          {recorder.error || fileError}
         </div>
       )}
 
-      <div className="px-3 py-2.5 flex items-end gap-1.5">
-        {/* Слева — attach */}
+      <div className="px-3 py-2.5 flex items-end gap-1.5 relative">
+        {/* Слева — attach (открывает file picker) */}
         <IconButton
           aria-label="Attach file"
-          title="Скоро"
-          disabled={isRecording || disabled}
+          onClick={() => fileInputRef.current?.click()}
+          disabled={isRecording || disabled || sending}
         >
           <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="1.8">
             <path
@@ -222,22 +285,16 @@ export function MessageInput({
             />
           </svg>
         </IconButton>
+        <input ref={fileInputRef} type="file" className="hidden" onChange={onPickFile} />
 
         {isRecording ? (
-          // ── Записываем голосовое ─────────────────────────────────
           <div className="flex-1 flex items-center gap-3 rounded-2xl bg-bg-elevated px-4 py-2.5 text-sm">
             <span className="h-2.5 w-2.5 rounded-full bg-red-500 record-pulse" />
             <span className="text-muted">Запись</span>
             <span className="text-white font-mono tabular-nums">
               {formatTimer(recorder.elapsedSec)}
             </span>
-            <button
-              type="button"
-              onClick={() => recorder.cancel()}
-              className="ml-auto text-xs text-muted hover:text-white"
-            >
-              Отмена
-            </button>
+            <span className="ml-auto text-xs text-muted">Отпустите чтобы отправить</span>
           </div>
         ) : (
           <textarea
@@ -245,23 +302,33 @@ export function MessageInput({
             value={text}
             onChange={(e) => onChange(e.target.value)}
             onKeyDown={onKeyDown}
-            placeholder={editing ? "Изменить сообщение…" : "Написать сообщение…"}
+            placeholder={editing ? "Изменить сообщение…" : "Написать..."}
             rows={1}
-            autoFocus
-            className="flex-1 resize-none max-h-40 rounded-2xl bg-bg-elevated border border-transparent focus:border-accent outline-none px-4 py-2.5 text-sm placeholder:text-muted"
+            className="flex-1 resize-none max-h-40 rounded-2xl bg-bg-elevated border border-transparent hover:border-border focus:border-accent focus:shadow-[0_0_0_3px_rgba(51,144,236,0.15)] outline-none px-4 py-2.5 text-sm placeholder:text-muted transition-[border-color,box-shadow] duration-200"
           />
         )}
 
-        {/* Справа — стикер (placeholder), потом mic/send */}
         {!isRecording && !showSendButton && (
-          <IconButton aria-label="Stickers" title="Скоро" disabled={disabled}>
-            <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="1.8">
-              <circle cx="12" cy="12" r="9" />
-              <circle cx="9" cy="10" r="1.2" fill="currentColor" />
-              <circle cx="15" cy="10" r="1.2" fill="currentColor" />
-              <path d="M9 15a3 3 0 0 0 6 0" strokeLinecap="round" />
-            </svg>
-          </IconButton>
+          <div className="relative">
+            <IconButton
+              aria-label="Emoji"
+              onClick={() => setEmojiOpen((v) => !v)}
+              disabled={disabled}
+            >
+              <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="1.8">
+                <circle cx="12" cy="12" r="9" />
+                <circle cx="9" cy="10" r="1.2" fill="currentColor" />
+                <circle cx="15" cy="10" r="1.2" fill="currentColor" />
+                <path d="M9 15a3 3 0 0 0 6 0" strokeLinecap="round" />
+              </svg>
+            </IconButton>
+            {emojiOpen && (
+              <EmojiPicker
+                onPick={(e) => insertEmoji(e)}
+                onClose={() => setEmojiOpen(false)}
+              />
+            )}
+          </div>
         )}
 
         {showSendButton ? (
@@ -284,25 +351,32 @@ export function MessageInput({
         ) : (
           <button
             type="button"
-            onClick={onMicClick}
+            onPointerDown={(e) => {
+              e.preventDefault();
+              void startHoldRecord();
+            }}
+            onPointerUp={(e) => {
+              e.preventDefault();
+              void finishHoldRecord();
+            }}
+            onPointerLeave={() => {
+              if (isRecording) cancelHoldRecord();
+            }}
+            onPointerCancel={() => {
+              if (isRecording) cancelHoldRecord();
+            }}
             disabled={isEncoding || disabled}
-            aria-label={isRecording ? "Stop recording" : "Record voice"}
-            className={`h-10 w-10 grid place-items-center rounded-full transition-colors ${
+            aria-label={isRecording ? "Recording — release to send" : "Hold to record"}
+            className={`h-10 w-10 grid place-items-center rounded-full transition-all duration-200 ${
               isRecording
-                ? "bg-red-500 hover:bg-red-600"
+                ? "bg-red-500 hover:bg-red-600 scale-110"
                 : "bg-accent hover:bg-accent-hover"
-            } disabled:opacity-50 disabled:cursor-not-allowed`}
+            } disabled:opacity-50 disabled:cursor-not-allowed select-none`}
           >
-            {isRecording ? (
-              <svg viewBox="0 0 24 24" className="h-5 w-5" fill="currentColor">
-                <rect x="6" y="6" width="12" height="12" rx="2" />
-              </svg>
-            ) : (
-              <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="1.8">
-                <rect x="9" y="3" width="6" height="11" rx="3" />
-                <path d="M5 11a7 7 0 0 0 14 0M12 18v3M9 21h6" strokeLinecap="round" />
-              </svg>
-            )}
+            <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="1.8">
+              <rect x="9" y="3" width="6" height="11" rx="3" />
+              <path d="M5 11a7 7 0 0 0 14 0M12 18v3M9 21h6" strokeLinecap="round" />
+            </svg>
           </button>
         )}
       </div>

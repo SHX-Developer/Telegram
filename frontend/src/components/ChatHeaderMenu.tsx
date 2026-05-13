@@ -48,7 +48,7 @@ export function ChatHeaderMenu({ onClearHistory, onDeleteChat }: Props) {
       {open && (
         <div
           role="menu"
-          className="absolute right-0 mt-1 min-w-[220px] rounded-xl bg-bg-elevated border border-border shadow-2xl overflow-hidden msg-menu-pop z-30"
+          className="absolute right-0 mt-1 min-w-[220px] rounded-xl glass-strong shadow-glass overflow-hidden msg-menu-pop z-30"
         >
           <button
             type="button"

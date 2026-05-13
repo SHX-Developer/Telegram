@@ -29,3 +29,19 @@ api.interceptors.request.use((config) => {
   }
   return config;
 });
+
+// В dev — выводим в консоль подробности любой 4xx/5xx ошибки, чтобы было
+// сразу видно что отвалилось, а не «Request failed with status code 500».
+api.interceptors.response.use(
+  (r) => r,
+  (err) => {
+    if (process.env.NODE_ENV !== "production" && err?.response) {
+      // eslint-disable-next-line no-console
+      console.error(
+        `[api ${err.config?.method?.toUpperCase() ?? "?"} ${err.config?.url}] ${err.response.status}`,
+        err.response.data
+      );
+    }
+    return Promise.reject(err);
+  }
+);

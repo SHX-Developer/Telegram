@@ -20,14 +20,15 @@ const dotClasses = {
 };
 
 // Стабильно выбираем цвет фона по строке-имени (детерминированно).
+// Тёмно-фиолетовая палитра с золотыми/розовыми акцентами.
 const palette = [
-  "bg-[#3390ec]",
-  "bg-[#7a55ff]",
-  "bg-[#e07a5f]",
-  "bg-[#2da27a]",
-  "bg-[#d27d1f]",
-  "bg-[#c95571]",
-  "bg-[#5a8ad1]",
+  "bg-[#7C3AED]", // accent purple
+  "bg-[#8B5CF6]", // violet-500
+  "bg-[#A855F7]", // purple-500
+  "bg-[#C026D3]", // fuchsia-600
+  "bg-[#D946EF]", // fuchsia-500
+  "bg-[#6366F1]", // indigo-500
+  "bg-[#D4AF37]", // gold
 ];
 
 function colorFor(name: string): string {
@@ -56,7 +57,7 @@ export function Avatar({ name, url, size = "md", online }: Props) {
       </div>
       {online && (
         <span
-          className={`absolute bottom-0 right-0 rounded-full bg-emerald-500 border-bg-panel ${dotClasses[size]}`}
+          className={`absolute bottom-0 right-0 rounded-full bg-success border-bg-panel ${dotClasses[size]}`}
           aria-label="online"
         />
       )}

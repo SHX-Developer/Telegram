@@ -8,44 +8,123 @@ datasource db {
 }
 
 model User {
-  id           String   @id @default(cuid())
-  username     String   @unique
+  id           String    @id @default(cuid())
+  // username теперь опционален — задаётся отдельно из профиля.
+  username     String?   @unique
   passwordHash String
+  // Основные поля профиля.
+  firstName    String
+  lastName     String?
+  phoneNumber  String?   @unique
+  bio          String?
+  birthday     DateTime?
+  // displayName хранится для удобства: firstName + " " + lastName.
+  // Синхронизируется на бэке при изменении имени/фамилии.
   displayName  String
   avatarUrl    String?
   lastSeenAt   DateTime?
-  createdAt    DateTime @default(now())
-  updatedAt    DateTime @updatedAt
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
 
   chatMembers ChatMember[]
   messages    Message[]
+  forwardedFromMessages Message[] @relation("MessageForwardedFromUser")
+  settings     UserSettings?
+  blocksGiven  BlockedUser[]  @relation("Blocker")
+  blocksReceived BlockedUser[] @relation("Blocked")
+  contactsOwned Contact[] @relation("ContactOwner")
+  contactedBy   Contact[] @relation("ContactUser")
 
   @@index([username])
+  @@index([phoneNumber])
+}
+
+model Contact {
+  id            String   @id @default(cuid())
+  ownerId       String
+  contactUserId String
+  createdAt     DateTime @default(now())
+
+  owner       User @relation("ContactOwner", fields: [ownerId], references: [id], onDelete: Cascade)
+  contactUser User @relation("ContactUser", fields: [contactUserId], references: [id], onDelete: Cascade)
+
+  @@unique([ownerId, contactUserId])
+  @@index([ownerId])
+  @@index([contactUserId])
+}
+
+model UserSettings {
+  id               String       @id @default(cuid())
+  userId           String       @unique
+  privacyLastSeen  PrivacyLevel @default(everyone)
+  privacyAvatar    PrivacyLevel @default(everyone)
+  privacyBio       PrivacyLevel @default(everyone)
+  privacyMessages  PrivacyLevel @default(everyone)
+  createdAt        DateTime     @default(now())
+  updatedAt        DateTime     @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model BlockedUser {
+  id        String   @id @default(cuid())
+  blockerId String
+  blockedId String
+  createdAt DateTime @default(now())
+
+  blocker User @relation("Blocker", fields: [blockerId], references: [id], onDelete: Cascade)
+  blocked User @relation("Blocked", fields: [blockedId], references: [id], onDelete: Cascade)
+
+  @@unique([blockerId, blockedId])
+  @@index([blockerId])
+  @@index([blockedId])
 }
 
 enum ChatType {
   private
+  group
+  channel
+}
+
+enum ChatRole {
+  owner
+  admin
+  member
+  subscriber
 }
 
 enum MessageKind {
   text
   voice
+  file
+}
+
+enum PrivacyLevel {
+  everyone
+  contacts
+  nobody
 }
 
 model Chat {
-  id        String   @id @default(cuid())
-  type      ChatType @default(private)
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  id              String   @id @default(cuid())
+  type            ChatType @default(private)
+  title           String?
+  avatarUrl       String?
+  pinnedMessageId String?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
 
-  members  ChatMember[]
-  messages Message[]
+  pinnedMessage Message? @relation("ChatPinnedMessage", fields: [pinnedMessageId], references: [id], onDelete: SetNull)
+  members       ChatMember[]
+  messages      Message[]
 }
 
 model ChatMember {
   id         String    @id @default(cuid())
   chatId     String
   userId     String
+  role       ChatRole  @default(member)
+  isPinned   Boolean   @default(false)
   lastReadAt DateTime?
   createdAt  DateTime  @default(now())
 
@@ -62,9 +141,12 @@ model Message {
   senderId          String
   kind              MessageKind @default(text)
   text              String
-  // Для voice: data URL (base64) аудио. Для будущих kind может расширяться.
+  // Для voice/file: data URL (base64) контент.
   attachmentUrl     String?
   attachmentDurationSec Int?
+  attachmentName    String?
+  attachmentMime    String?
+  attachmentSize    Int?
   createdAt         DateTime    @default(now())
   isEdited          Boolean     @default(false)
   deletedAt         DateTime?
@@ -76,8 +158,43 @@ model Message {
   replyTo   Message?  @relation("MessageReply", fields: [replyToId], references: [id], onDelete: SetNull)
   replies   Message[] @relation("MessageReply")
 
+  forwardedFromUserId    String?
+  forwardedFromMessageId String?
+  forwardedFromUser      User?    @relation("MessageForwardedFromUser", fields: [forwardedFromUserId], references: [id], onDelete: SetNull)
+  forwardedFromMessage   Message? @relation("MessageForwardedFromMsg", fields: [forwardedFromMessageId], references: [id], onDelete: SetNull)
+  forwardedToMessages    Message[] @relation("MessageForwardedFromMsg")
+
   chat   Chat @relation(fields: [chatId], references: [id], onDelete: Cascade)
   sender User @relation(fields: [senderId], references: [id], onDelete: Cascade)
 
+  reactions MessageReaction[]
+  views     MessageView[]
+  pinnedInChats Chat[] @relation("ChatPinnedMessage")
+
   @@index([chatId, createdAt])
+}
+
+model MessageReaction {
+  id        String   @id @default(cuid())
+  messageId String
+  userId    String
+  emoji     String
+  createdAt DateTime @default(now())
+
+  message Message @relation(fields: [messageId], references: [id], onDelete: Cascade)
+
+  @@unique([messageId, userId])
+  @@index([messageId])
+}
+
+model MessageView {
+  id        String   @id @default(cuid())
+  messageId String
+  userId    String
+  viewedAt  DateTime @default(now())
+
+  message Message @relation(fields: [messageId], references: [id], onDelete: Cascade)
+
+  @@unique([messageId, userId])
+  @@index([messageId])
 }

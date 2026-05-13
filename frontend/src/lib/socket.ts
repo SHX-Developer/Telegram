@@ -14,8 +14,19 @@ interface ServerToClient {
   new_message: (p: { message: Message }) => void;
   message_updated: (p: { message: Message }) => void;
   message_deleted: (p: { chatId: string; messageId: string; forEveryone: boolean }) => void;
+  message_reaction_changed: (p: {
+    chatId: string;
+    messageId: string;
+    userId: string;
+    emoji: string | null;
+  }) => void;
+  message_viewed: (p: { chatId: string; messageId: string; viewsCount: number }) => void;
+  chat_pinned_message_changed: (p: { chatId: string; messageId: string | null }) => void;
   chat_cleared: (p: { chatId: string }) => void;
   chat_deleted: (p: { chatId: string }) => void;
+  chat_updated: (p: { chatId: string }) => void;
+  chat_member_added: (p: { chatId: string; userIds: string[] }) => void;
+  chat_member_removed: (p: { chatId: string; userId: string }) => void;
   messages_read: (p: { chatId: string; userId: string; lastReadAt: string }) => void;
   user_typing: (p: { chatId: string; userId: string }) => void;
   user_stopped_typing: (p: { chatId: string; userId: string }) => void;

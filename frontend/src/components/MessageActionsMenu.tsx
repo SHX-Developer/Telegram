@@ -3,11 +3,22 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 
-export type MessageAction = "reply" | "copy" | "edit" | "delete";
+export type MessageAction =
+  | "react"
+  | "reply"
+  | "copy"
+  | "forward"
+  | "pin"
+  | "unpin"
+  | "edit"
+  | "delete";
 
 interface Props {
   isMine: boolean;
   canEdit: boolean;
+  canCopy: boolean;
+  canPin: boolean;
+  isPinned: boolean;
   /** Координаты курсора при contextmenu */
   x: number;
   y: number;
@@ -17,7 +28,26 @@ interface Props {
 
 const iconBase = "h-4 w-4";
 
+const forwardIcon = (
+  <svg viewBox="0 0 24 24" className={iconBase} fill="none" stroke="currentColor" strokeWidth="1.8">
+    <path d="M14 4l6 6-6 6M3 16a6 6 0 0 1 6-6h11" strokeLinecap="round" strokeLinejoin="round" />
+  </svg>
+);
+const pinIcon = (
+  <svg viewBox="0 0 24 24" className={iconBase} fill="none" stroke="currentColor" strokeWidth="1.8">
+    <path d="M12 2v10m0 0h6l-2 4H8l-2-4h6zm0 10v10" strokeLinecap="round" strokeLinejoin="round" />
+  </svg>
+);
+
 const ICONS: Record<MessageAction, React.ReactNode> = {
+  react: (
+    <svg viewBox="0 0 24 24" className={iconBase} fill="none" stroke="currentColor" strokeWidth="1.8">
+      <circle cx="12" cy="12" r="9" />
+      <circle cx="9" cy="10" r="1.2" fill="currentColor" />
+      <circle cx="15" cy="10" r="1.2" fill="currentColor" />
+      <path d="M9 15a3 3 0 0 0 6 0" strokeLinecap="round" />
+    </svg>
+  ),
   reply: (
     <svg viewBox="0 0 24 24" className={iconBase} fill="none" stroke="currentColor" strokeWidth="1.8">
       <path d="M9 14H5l5-5m-5 5 5 5m-4-5h7a6 6 0 1 1 0 12" strokeLinecap="round" strokeLinejoin="round" />
@@ -29,6 +59,9 @@ const ICONS: Record<MessageAction, React.ReactNode> = {
       <path d="M5 15V6a2 2 0 0 1 2-2h9" />
     </svg>
   ),
+  forward: forwardIcon,
+  pin: pinIcon,
+  unpin: pinIcon,
   edit: (
     <svg viewBox="0 0 24 24" className={iconBase} fill="none" stroke="currentColor" strokeWidth="1.8">
       <path d="M4 20h4l10-10-4-4L4 16v4Z" strokeLinejoin="round" />
@@ -43,15 +76,89 @@ const ICONS: Record<MessageAction, React.ReactNode> = {
 };
 
 const LABELS: Record<MessageAction, string> = {
+  react: "Реакция",
   reply: "Ответить",
   copy: "Скопировать",
+  forward: "Переслать",
+  pin: "Закрепить",
+  unpin: "Открепить",
   edit: "Изменить",
   delete: "Удалить",
 };
 
-export function MessageActionsMenu({ isMine, canEdit, x, y, onAction, onClose }: Props) {
+// Оценки размеров до фактического замера (используются на самом первом
+// рендере, чтобы меню сразу появилось в правильном углу без «прыжка»).
+const ESTIMATED_WIDTH = 190;
+const ESTIMATED_ITEM_HEIGHT = 40;
+
+interface MenuPos {
+  left: number;
+  top: number;
+  flipH: boolean;
+  flipV: boolean;
+}
+
+function computePos(
+  x: number,
+  y: number,
+  isMine: boolean,
+  width: number,
+  height: number
+): MenuPos {
+  const margin = 8;
+  // window может быть недоступен при SSR — но компонент клиентский, всё ок
+  const vw = typeof window !== "undefined" ? window.innerWidth : 1024;
+  const vh = typeof window !== "undefined" ? window.innerHeight : 768;
+
+  // ── Horizontal ─────────────────────────────────────────────
+  let left: number;
+  let flipH: boolean;
+  if (isMine) {
+    flipH = true;
+    left = x - width;
+    if (left < margin) {
+      flipH = false;
+      left = x;
+    }
+  } else {
+    flipH = false;
+    left = x;
+    if (left + width + margin > vw) {
+      flipH = true;
+      left = x - width;
+    }
+  }
+  if (left + width + margin > vw) left = vw - width - margin;
+  if (left < margin) left = margin;
+
+  // ── Vertical ───────────────────────────────────────────────
+  let top: number;
+  let flipV: boolean;
+  if (y + height + margin > vh) {
+    flipV = true;
+    top = y - height;
+  } else {
+    flipV = false;
+    top = y;
+  }
+  if (top + height + margin > vh) top = vh - height - margin;
+  if (top < margin) top = margin;
+
+  return { left, top, flipH, flipV };
+}
+
+export function MessageActionsMenu({
+  isMine,
+  canEdit,
+  canCopy,
+  canPin,
+  isPinned,
+  x,
+  y,
+  onAction,
+  onClose,
+}: Props) {
   const ref = useRef<HTMLDivElement>(null);
-  const [pos, setPos] = useState<{ left: number; top: number }>({ left: x, top: y });
   const [mounted, setMounted] = useState(false);
 
   // SSR-friendly portal
@@ -59,22 +166,32 @@ export function MessageActionsMenu({ isMine, canEdit, x, y, onAction, onClose }:
     setMounted(true);
   }, []);
 
-  // После монтирования замерим размеры и зажмём в viewport
+  // Прикинуть количество кнопок заранее, чтобы оценка высоты была близка к реальной.
+  const estimatedItems =
+    1 /* react */ +
+    1 /* reply */ +
+    (canCopy ? 1 : 0) +
+    1 /* forward */ +
+    (canPin ? 1 : 0) +
+    (isMine && canEdit ? 1 : 0) +
+    1; /* delete */
+  const estimatedHeight = estimatedItems * ESTIMATED_ITEM_HEIGHT;
+
+  // На первом рендере уже считаем позицию по оценочным размерам — никаких прыжков.
+  const [pos, setPos] = useState<MenuPos>(() =>
+    computePos(x, y, isMine, ESTIMATED_WIDTH, estimatedHeight)
+  );
+
+  // После монтирования пересчитываем по фактическим размерам.
+  // offsetWidth/offsetHeight игнорируют transform: scale, которое стартует с
+  // animation — поэтому замер всегда даёт «настоящий» размер.
   useLayoutEffect(() => {
     const el = ref.current;
     if (!el) return;
-    const rect = el.getBoundingClientRect();
-    const margin = 8;
-    let left = x;
-    let top = y;
-    if (left + rect.width + margin > window.innerWidth) {
-      left = Math.max(margin, window.innerWidth - rect.width - margin);
-    }
-    if (top + rect.height + margin > window.innerHeight) {
-      top = Math.max(margin, window.innerHeight - rect.height - margin);
-    }
-    setPos({ left, top });
-  }, [x, y]);
+    const w = el.offsetWidth;
+    const h = el.offsetHeight;
+    setPos(computePos(x, y, isMine, w, h));
+  }, [x, y, isMine, estimatedHeight]);
 
   useEffect(() => {
     function onDocDown(e: MouseEvent) {
@@ -101,18 +218,25 @@ export function MessageActionsMenu({ isMine, canEdit, x, y, onAction, onClose }:
 
   if (!mounted || typeof document === "undefined") return null;
 
-  const actions: MessageAction[] = isMine
-    ? canEdit
-      ? ["reply", "copy", "edit", "delete"]
-      : ["reply", "copy", "delete"]
-    : ["reply", "copy", "delete"];
+  const actions: MessageAction[] = [
+    "react",
+    "reply",
+    ...(canCopy ? (["copy"] as const) : []),
+    "forward",
+    ...(canPin ? ([isPinned ? "unpin" : "pin"] as const) : []),
+    ...(isMine && canEdit ? (["edit"] as const) : []),
+    "delete",
+  ];
+
+  // Origin для transform-анимации совпадает с углом, прилегающим к точке клика
+  const transformOrigin = `${pos.flipV ? "bottom" : "top"} ${pos.flipH ? "right" : "left"}`;
 
   return createPortal(
     <div
       ref={ref}
       role="menu"
-      style={{ left: pos.left, top: pos.top }}
-      className="fixed z-[100] min-w-[170px] rounded-xl bg-bg-elevated border border-border shadow-2xl overflow-hidden msg-menu-pop"
+      style={{ left: pos.left, top: pos.top, transformOrigin }}
+      className="fixed z-[100] min-w-[170px] rounded-xl glass-strong shadow-glass overflow-hidden msg-menu-pop"
     >
       {actions.map((a) => (
         <button

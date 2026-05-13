@@ -1,6 +1,11 @@
 export interface User {
   id: string;
-  username: string;
+  username: string | null;
+  firstName: string;
+  lastName: string | null;
+  phoneNumber: string | null;
+  bio: string | null;
+  birthday: string | null;
   displayName: string;
   avatarUrl: string | null;
   lastSeenAt: string | null;
@@ -12,7 +17,17 @@ export interface AuthResponse {
   user: User;
 }
 
-export type MessageKind = "text" | "voice";
+export type MessageKind = "text" | "voice" | "file";
+export type ChatType = "private" | "group" | "channel";
+export type ChatRole = "owner" | "admin" | "member" | "subscriber";
+export type PrivacyLevel = "everyone" | "contacts" | "nobody";
+
+export interface UserSettings {
+  privacyLastSeen: PrivacyLevel;
+  privacyAvatar: PrivacyLevel;
+  privacyBio: PrivacyLevel;
+  privacyMessages: PrivacyLevel;
+}
 
 export interface MessageReply {
   id: string;
@@ -20,7 +35,21 @@ export interface MessageReply {
   kind: MessageKind;
   text: string;
   attachmentDurationSec: number | null;
+  attachmentName: string | null;
   deletedAt: string | null;
+}
+
+export interface ReactionSummary {
+  emoji: string;
+  count: number;
+  byMe: boolean;
+  userIds: string[];
+}
+
+export interface MessageForwardedFrom {
+  userId: string;
+  displayName: string;
+  username: string | null;
 }
 
 export interface Message {
@@ -31,22 +60,43 @@ export interface Message {
   text: string;
   attachmentUrl: string | null;
   attachmentDurationSec: number | null;
+  attachmentName: string | null;
+  attachmentMime: string | null;
+  attachmentSize: number | null;
   createdAt: string;
   isEdited: boolean;
   deletedAt: string | null;
   replyTo: MessageReply | null;
+  forwardedFrom: MessageForwardedFrom | null;
+  reactions: ReactionSummary[];
+  viewsCount: number;
+}
+
+export interface ChatMember {
+  userId: string;
+  role: ChatRole;
+  lastReadAt: string | null;
+  user: User;
+  isOnline: boolean;
 }
 
 export interface Chat {
   id: string;
-  type: "private";
+  type: ChatType;
+  title: string | null;
+  avatarUrl: string | null;
   createdAt: string;
   updatedAt: string;
+  myRole: ChatRole | null;
+  isPinned: boolean;
+  /** Только для private */
   otherUser: User | null;
   otherUserIsOnline: boolean;
   otherUserLastReadAt: string | null;
+  members: ChatMember[];
   myLastReadAt: string | null;
   lastMessage: Message | null;
+  pinnedMessage: Message | null;
   unreadCount: number;
 }
 

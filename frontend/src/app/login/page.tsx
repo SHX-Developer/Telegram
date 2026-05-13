@@ -18,7 +18,7 @@ export default function LoginPage() {
 function LoginForm() {
   const router = useRouter();
   const { login, loading } = useAuthStore();
-  const [username, setUsername] = useState("");
+  const [identifier, setIdentifier] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
 
@@ -26,7 +26,7 @@ function LoginForm() {
     e.preventDefault();
     setError(null);
     try {
-      await login(username.trim(), password);
+      await login(identifier.trim(), password);
       router.replace("/chats");
     } catch (err) {
       if (axios.isAxiosError(err)) {
@@ -44,25 +44,28 @@ function LoginForm() {
         className="w-full max-w-sm bg-bg-panel border border-border rounded-2xl p-8 shadow-xl"
       >
         <h1 className="text-2xl font-semibold mb-1 text-center">Sign in</h1>
-        <p className="text-muted text-sm text-center mb-6">Welcome back to Messenger</p>
+        <p className="text-muted text-sm text-center mb-6">
+          Войди по номеру телефона или username
+        </p>
 
-        <label className="block text-sm text-muted mb-1.5">Username</label>
+        <label className="block text-sm text-muted mb-1.5">Телефон или username</label>
         <input
           type="text"
           autoComplete="username"
-          value={username}
-          onChange={(e) => setUsername(e.target.value)}
-          className="w-full mb-4 rounded-lg bg-bg-elevated border border-border focus:border-accent outline-none px-3 py-2 text-sm"
+          value={identifier}
+          onChange={(e) => setIdentifier(e.target.value)}
+          placeholder="+7…  или  @username"
+          className="w-full mb-4 rounded-lg bg-bg-elevated border border-border focus:border-accent outline-none px-3 py-2 text-sm transition-colors"
           required
         />
 
-        <label className="block text-sm text-muted mb-1.5">Password</label>
+        <label className="block text-sm text-muted mb-1.5">Пароль</label>
         <input
           type="password"
           autoComplete="current-password"
           value={password}
           onChange={(e) => setPassword(e.target.value)}
-          className="w-full mb-4 rounded-lg bg-bg-elevated border border-border focus:border-accent outline-none px-3 py-2 text-sm"
+          className="w-full mb-4 rounded-lg bg-bg-elevated border border-border focus:border-accent outline-none px-3 py-2 text-sm transition-colors"
           required
         />
 
@@ -81,9 +84,9 @@ function LoginForm() {
         </button>
 
         <div className="mt-6 text-center text-sm text-muted">
-          Don&apos;t have an account?{" "}
+          Нет аккаунта?{" "}
           <Link href="/register" className="text-accent hover:underline">
-            Create one
+            Зарегистрироваться
           </Link>
         </div>
       </form>
